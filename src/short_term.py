@@ -31,7 +31,7 @@ class ChatMessage:
 @dataclass
 class ShortTermMemory:
     strategy: Strategy = "sliding"
-    max_recent_messages: int = 6
+    max_recent_messages: int = 4
     pressure_tokens: int = 500
     messages: list[ChatMessage] = field(default_factory=list)
     summary: str = ""
