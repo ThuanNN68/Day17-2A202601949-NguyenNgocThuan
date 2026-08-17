@@ -108,69 +108,79 @@ def retrieve_for_case(
       * Finish with memory.assemble_context(layers).
     """
     layers = {"short_term": "", "long_term": "", "episodic": "", "semantic": ""}
-    
+
     # 1. Build short_term
-    stm = ShortTermMemory(strategy="sliding", max_recent_messages=4, pressure_tokens=500)
-    
+    stm = ShortTermMemory(strategy="sliding", max_recent_messages=6, pressure_tokens=450)
+
     # Load past messages from fixture or sessions.json
     messages = case.get("fixture_messages")
     if not messages:
-        # Load from thread in sessions.json
-        sessions_data = load_dataset()
-        for c in sessions_data.get("evaluations", []):
-            if c["id"] == case["id"]:
-                messages = c.get("fixture_messages")
-                break
-        
-        # If still no fixture, we might need to get it from the full trace or it's empty
-        if not messages:
-            messages = []
-            user_id = case.get("user_id")
-            thread_id = case.get("thread_id")
-            for thread in sessions_data.get("threads", []):
-                if thread.get("id") == thread_id:
-                    messages = thread.get("messages", [])
+        try:
+            dataset = load_dataset()
+            for user in dataset.get("users", []):
+                if user.get("user_id") == case.get("user_id"):
+                    for session in user.get("sessions", []):
+                        if session.get("thread_id") == case.get("thread_id"):
+                            messages = session.get("messages", [])
+                            break
                     break
-    
-    for msg in messages:
+        except Exception:
+            messages = []
+
+    for msg in messages or []:
         role = "assistant" if msg.get("role") == "assistant" else "user"
         stm.add(role, msg.get("content", ""))
-        
+
     for msg in extra_messages:
-        role = msg.get("role", "user")
+        role = "assistant" if msg.get("role") == "assistant" else "user"
         stm.add(role, msg.get("content", ""))
-        
+
     layers["short_term"] = stm.render()
-    
+
     # 2. Fetch durable layers
     expected_layer = case.get("expected_layer", "")
-    retrieve_layers = case.get("retrieve_layers", [expected_layer]) if expected_layer == "mixed" else [expected_layer]
-    
+    if expected_layer == "mixed":
+        retrieve_layers = case.get("retrieve_layers") or ["long_term", "semantic"]
+    elif expected_layer in ("short_term", "long_term", "episodic", "semantic"):
+        retrieve_layers = [expected_layer]
+    else:
+        retrieve_layers = ["long_term", "semantic"]
+
     user_id = case.get("user_id", "")
     thread_id = case.get("thread_id", "")
     query = case.get("query", "")
-    
+
     if "long_term" in retrieve_layers and user_id and thread_id:
         try:
-            layers["long_term"] = memory.retrieve_long_term(user_id, thread_id, query)
+            layers["long_term"] = memory.retrieve_long_term(
+                user_id=user_id,
+                thread_id=thread_id,
+                query=query,
+            )
         except Exception:
             pass
-            
+
     if "episodic" in retrieve_layers and user_id:
         try:
-            layers["episodic"] = memory.retrieve_episodic(user_id, query)
+            layers["episodic"] = memory.retrieve_episodic(
+                user_id=user_id,
+                query=query,
+            )
         except Exception:
             pass
-            
+
     if "semantic" in retrieve_layers:
         try:
-            layers["semantic"] = memory.retrieve_semantic(settings.zep_semantic_graph_id, query)
+            layers["semantic"] = memory.retrieve_semantic(
+                graph_id=settings.semantic_graph_id,
+                query=query,
+            )
         except Exception:
             pass
-            
+
     # 3. Assemble
     merged, budget = memory.assemble_context(layers)
-    
+
     return {
         "merged_context": merged,
         "layers": layers,
